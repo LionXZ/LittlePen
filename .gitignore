@@ -26,8 +26,7 @@ htmlcov/
 
 # ===== 后端数据 =====
 backend/data/uploads/*
-backend/data/chroma/
-backend/data/essay_grading.db
+*.sql
 logs/
 
 # ===== 前端 (Vite + Node) =====

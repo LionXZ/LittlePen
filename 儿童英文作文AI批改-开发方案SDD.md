@@ -41,7 +41,7 @@
 | AI 语法批改 | deepseek-v4-pro + 结构化输出（语法错误 → 修正建议列表）| P0 |
 | AI 四维评分 | deepseek-v4-pro + 结构化输出（卷面/内容/语言/结构）| P0 |
 | 结果展示 | 同一界面展示全部批改结果 | P0 |
-| 批改结果持久化 | SQLite 存储历史批改记录 | P1 |
+| 批改结果持久化 | MySQL 存储历史批改记录 | P1 |
 | 流式批改进度 | SSE 推送处理进度 | P1 |
 
 ## 1.3 AI Agent 组件映射
@@ -83,7 +83,7 @@
 | 二维码解析 | pyzbar + Pillow | 纯 Python，轻量 |
 | Web 框架 | FastAPI | 高性能异步，支持 StreamingResponse |
 | 前端 | Vue 3 + Vite + Element Plus | 快速构建上传界面与结果展示 |
-| 持久化 | SQLite | 单机部署，存储批改记录 |
+| 持久化 | MySQL 8.0 + SQLAlchemy 2.0 (async) | 连接池、异步驱动、支持按学生/班级查询 |
 | 图片存储 | 本地文件系统 | 开发阶段 |
 | 可观测性 | LangSmith | 全链路 Agent 追踪 |
 | 容器化 | Docker + docker-compose | 标准化部署 |
@@ -126,7 +126,7 @@
 │ scoring_tool │              │                            │
 ├──────────────┴──────────────┴────────────────────────────┤
 │                   基础设施层                              │
-│   SQLite (批改记录)  │  本地文件系统 (图片存储)            │
+│   MySQL (批改记录)   │  本地文件系统 (图片存储)            │
 │   LangSmith (可观测) │  Docker (部署)                    │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -224,8 +224,7 @@ essay-grading/
 ├── backend/                      # 后端（Python FastAPI）
 │   ├── requirements.txt
 │   ├── data/
-│   │   ├── uploads/              # 上传图片存储
-│   │   └── essay_grading.db      # SQLite 批改记录
+│   │   └── uploads/              # 上传图片存储
 │   │
 │   ├── src/
 │   │   ├── __init__.py
@@ -261,7 +260,7 @@ essay-grading/
 │   │   │
 │   │   ├── db/                   # 持久化层
 │   │   │   ├── __init__.py
-│   │   │   └── database.py       # SQLite CRUD
+│   │   │   └── database.py       # MySQL CRUD (SQLAlchemy async)
 │   │   │
 │   │   ├── utils/                # 工具层
 │   │   │   ├── __init__.py
@@ -315,7 +314,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-PROJECT_ROOT = Path(__file__).parent.parent.resolve()  # backend/ 目录
+PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()  # backend/ 目录
 
 class Settings:
     """全局配置"""
@@ -339,8 +338,22 @@ class Settings:
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", str(PROJECT_ROOT / "data" / "uploads"))
     MAX_UPLOAD_SIZE_MB: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "10"))
 
-    # ===== SQLite =====
-    SQLITE_DB_PATH: str = os.getenv("SQLITE_DB_PATH", str(PROJECT_ROOT / "data" / "essay_grading.db"))
+    # ===== MySQL =====
+    MYSQL_HOST: str = os.getenv("MYSQL_HOST", "localhost")
+    MYSQL_PORT: int = int(os.getenv("MYSQL_PORT", "3306"))
+    MYSQL_USER: str = os.getenv("MYSQL_USER", "root")
+    MYSQL_PASSWORD: str = os.getenv("MYSQL_PASSWORD", "")
+    MYSQL_DATABASE: str = os.getenv("MYSQL_DATABASE", "LittlePen")
+    MYSQL_POOL_SIZE: int = int(os.getenv("MYSQL_POOL_SIZE", "10"))
+    MYSQL_POOL_RECYCLE: int = int(os.getenv("MYSQL_POOL_RECYCLE", "3600"))
+
+    @property
+    def database_url(self) -> str:
+        return (
+            f"mysql+asyncmy://{self.MYSQL_USER}:{self.MYSQL_PASSWORD}"
+            f"@{self.MYSQL_HOST}:{self.MYSQL_PORT}/{self.MYSQL_DATABASE}"
+            f"?charset=utf8mb4"
+        )
 
     # ===== LangSmith =====
     LANGSMITH_API_KEY: str = os.getenv("LANGSMITH_API_KEY", "")
@@ -1631,18 +1644,41 @@ CMD ["python", "-m", "src.app"]
 version: "3.8"
 
 services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: LittlePen
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   essay-grading:
     build: .
     ports:
       - "8000:8000"
+    depends_on:
+      mysql:
+        condition: service_healthy
     environment:
       - ZHIPU_API_KEY=${ZHIPU_API_KEY}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_DATABASE=LittlePen
       - DEBUG=false
     volumes:
       - ./backend/data/uploads:/app/data/uploads
-      - ./backend/data/essay_grading.db:/app/data/essay_grading.db
       - ./logs:/app/logs
     restart: unless-stopped
     healthcheck:
@@ -1650,6 +1686,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+volumes:
+  mysql_data:
 ```
 
 ## 12.3 requirements.txt
@@ -1669,6 +1708,9 @@ pyzbar>=0.1.9
 Pillow>=10.0.0
 pytest>=8.0.0
 pytest-asyncio>=0.24.0
+sqlalchemy[asyncio]>=2.0.0
+asyncmy>=0.2.9
+pymysql>=1.1.0
 ```
 
 ---
@@ -1761,7 +1803,7 @@ logger = setup_logger()
 │ template_tool│              │                              │
 ├──────────────┴──────────────┴─────────────────────────────┤
 │                   基础设施                                  │
-│   SQLite │ 本地文件存储 │ LangSmith │ Docker               │
+│   MySQL │ 本地文件存储 │ LangSmith │ Docker               │
 └──────────────────────────────────────────────────────────┘
 ```
 

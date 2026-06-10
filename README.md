@@ -14,7 +14,7 @@
 | 四维评分 | 卷面整洁度、内容质量、语言表达、篇章结构四个维度打分（各 0-25 分） |
 | 结果展示 | 原文图片 + 语法错误列表 + 四维雷达图 + 总分 |
 | 流式进度 | SSE 推送每一步处理状态，实时显示批改进度 |
-| 历史记录 | SQLite 持久化存储，支持查询历史批改记录 |
+| 历史记录 | MySQL 持久化存储，支持查询历史批改记录 |
 
 ## 系统架构
 
@@ -56,7 +56,7 @@
 │  └────────────────────────────────────────────────────┘   │
 │                          │                               │
 │  ┌───────┐  ┌──────────┐  ┌──────────┐  ┌───────────┐   │
-│  │ Zhipu │  │ DeepSeek │  │  SQLite  │  │ LangSmith │   │
+│  │ Zhipu │  │ DeepSeek │  │  MySQL   │  │ LangSmith │   │
 │  │ (OCR) │  │ (批改/评分)│  │ (持久化) │  │ (可观测)  │   │
 │  └───────┘  └──────────┘  └──────────┘  └───────────┘   │
 └──────────────────────────────────────────────────────────┘
@@ -72,7 +72,7 @@
 | Web 框架 | FastAPI + Uvicorn | >=0.115 |
 | 前端 | Vue 3 + Vite + Element Plus | Vue >=3.5 |
 | 图表 | ECharts | >=5.6 |
-| 数据库 | SQLite | - |
+| 数据库 | MySQL 8.0 + SQLAlchemy 2.0 (async) | - |
 | 可观测 | LangSmith | >=0.3 |
 | 容器化 | Docker + docker-compose | - |
 
@@ -89,7 +89,7 @@ LittlePen/
 │   │   ├── config/
 │   │   │   └── settings.py      # 全局配置 (API Key, 路径, 参数)
 │   │   ├── db/
-│   │   │   └── database.py      # SQLite 数据库操作
+│   │   │   └── database.py      # MySQL 数据库操作 (SQLAlchemy async + asyncmy)
 │   │   ├── models/              # 数据模型层
 │   │   ├── pipeline/            # LangGraph 批改流水线 (核心)
 │   │   │   ├── state.py         #   状态定义 (EssayGradingState)
@@ -106,9 +106,7 @@ LittlePen/
 │   │   │   └── logger.py        # 日志工具
 │   │   └── app.py               # 应用启动入口
 │   ├── data/                    # 本地数据目录
-│   │   ├── uploads/             #   上传图片存储
-│   │   ├── chroma/              #   向量数据库 (预留)
-│   │   └── essay_grading.db     #   SQLite 数据库文件
+│   │   └── uploads/             #   上传图片存储
 │   ├── tests/                   # 测试
 │   ├── evaluations/             # 评估脚本
 │   └── requirements.txt         # Python 依赖
@@ -139,6 +137,7 @@ LittlePen/
 
 - Python >= 3.10
 - Node.js >= 18
+- MySQL >= 8.0
 - pnpm (推荐) 或 npm
 
 ### 1. 克隆项目
@@ -147,13 +146,20 @@ LittlePen/
 cd LittlePen
 ```
 
-### 2. 配置环境变量
+### 2. 创建数据库
 
 ```bash
+mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS LittlePen CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+```
+
+### 3. 配置环境变量
+
+```bash
+cd backend
 cp .env.example .env
 ```
 
-编辑 `.env` 文件，填入 API Key:
+编辑 `.env` 文件，填入 API Key 和数据库密码:
 
 ```env
 # 智谱 GLM (OCR 模型, 必填)
@@ -162,13 +168,20 @@ ZHIPU_API_KEY=your_zhipu_api_key
 # DeepSeek (批改模型, 必填)
 DEEPSEEK_API_KEY=your_deepseek_api_key
 
+# MySQL 数据库（必填）
+MYSQL_HOST=localhost
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=your_mysql_password
+MYSQL_DATABASE=LittlePen
+
 # 以下可选
-LANGSMITH_API_KEY=your_langsmith_api_key  # 可观测追踪
+LANGSMITH_API_KEY=your_langsmith_api_key
 API_PORT=8000
 DEBUG=false
 ```
 
-### 3. 启动后端
+### 4. 启动后端
 
 ```bash
 cd backend
@@ -186,7 +199,7 @@ python -m src.app
 
 后端运行在 http://localhost:8000，API 文档见 http://localhost:8000/docs
 
-### 4. 启动前端
+### 5. 启动前端
 
 ```bash
 cd frontend
@@ -304,7 +317,13 @@ upload ──▶ qr_parse ──▶ ocr (GLM-5V) ──▶ template_remove
 | `DEBUG` | `false` | 调试模式 (开启热重载) |
 | `MAX_UPLOAD_SIZE_MB` | `10` | 最大上传文件大小 (MB) |
 | `UPLOAD_DIR` | `backend/data/uploads` | 上传文件存储目录 |
-| `SQLITE_DB_PATH` | `backend/data/essay_grading.db` | 数据库文件路径 |
+| `MYSQL_HOST` | `localhost` | MySQL 主机地址 |
+| `MYSQL_PORT` | `3306` | MySQL 端口 |
+| `MYSQL_USER` | `root` | MySQL 用户名 |
+| `MYSQL_PASSWORD` | - | MySQL 密码 (必填) |
+| `MYSQL_DATABASE` | `LittlePen` | MySQL 数据库名 |
+| `MYSQL_POOL_SIZE` | `10` | 连接池大小 |
+| `MYSQL_POOL_RECYCLE` | `3600` | 连接回收时间 (秒) |
 | `LANGSMITH_API_KEY` | - | LangSmith API Key (可选，用于追踪) |
 | `LANGSMITH_PROJECT` | `essay-grading` | LangSmith 项目名称 |
 | `MAX_MODEL_RETRIES` | `3` | LLM 调用最大重试次数 |

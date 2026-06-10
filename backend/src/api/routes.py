@@ -41,7 +41,7 @@ async def grade_essay(request: GradeRequest):
 
         # 持久化批改记录
         record_id = str(uuid.uuid4())
-        save_grading_record(record_id, request.thread_id, result)
+        await save_grading_record(record_id, request.thread_id, result)
 
         logger.info(f"批改记录已保存, id={record_id}, thread_id={request.thread_id}")
         return GradeResponse(**result)
@@ -94,7 +94,7 @@ async def grade_essay_upload(
         raise HTTPException(status_code=400, detail=result["error"])
 
     record_id = str(uuid.uuid4())
-    save_grading_record(record_id, thread_id, result, image_path=image_path)
+    await save_grading_record(record_id, thread_id, result, image_path=image_path)
 
     logger.info(f"文件上传批改完成, id={record_id}, file={file.filename}")
     return GradeResponse(**result)
@@ -145,7 +145,7 @@ async def grade_essay_stream(request: GradeRequest):
 @router.get("/essay/{record_id}")
 async def get_grading_result(record_id: str):
     """查询历史批改记录"""
-    record = get_grading_record(record_id)
+    record = await get_grading_record(record_id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"批改记录不存在: {record_id}")
     return record
