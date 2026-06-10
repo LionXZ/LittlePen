@@ -1,0 +1,44 @@
+# ===== 环境 & 密钥 =====
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+*.so
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.prof
+
+# ===== IDE & 编辑器 =====
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ===== 后端数据 =====
+backend/data/uploads/*
+backend/data/chroma/
+backend/data/essay_grading.db
+logs/
+
+# ===== 前端 (Vite + Node) =====
+frontend/node_modules/
+frontend/dist/
+*.local
+
+# ===== 构建产物 =====
+dist/
+build/
+
+# ===== 系统 =====
+.DS_Store
+Thumbs.db
