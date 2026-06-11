@@ -14,7 +14,8 @@
 | 四维评分 | 卷面整洁度、内容质量、语言表达、篇章结构四个维度打分（各 0-25 分） |
 | 结果展示 | 原文图片 + 语法错误列表 + 四维雷达图 + 总分 |
 | 流式进度 | SSE 推送每一步处理状态，实时显示批改进度 |
-| 历史记录 | MySQL 持久化存储，支持查询历史批改记录 |
+| 批量批改 | 支持多文件/ZIP 压缩包上传，后台异步批改，作业列表查看进度 |
+| 历史记录 | MySQL 持久化存储，全部作业列表展示，支持状态轮询 |
 
 ## 系统架构
 
@@ -35,10 +36,11 @@
 │                          │                               │
 │  ┌──────────┐  ┌─────────┴─────────┐  ┌────────────┐   │
 │  │ /health  │  │  /essay/grade     │  │ /essay/{id} │   │
-│  │          │  │  /essay/grade/    │  │             │   │
-│  │          │  │  upload           │  │             │   │
-│  │          │  │  /essay/grade/    │  │             │   │
-│  │          │  │  stream           │  │             │   │
+│  │ /essays  │  │  /essay/grade/    │  │ /batch/     │   │
+│  │          │  │  upload           │  │   {id}      │   │
+│  │          │  │  /essay/grade/    │  │ /batch/     │   │
+│  │          │  │  stream           │  │   upload    │   │
+│  │          │  │  /batch/upload    │  │             │   │
 │  └──────────┘  └─────────┬─────────┘  └──────┬──────┘   │
 │                          │                    │          │
 │  ┌───────────────────────┴────────────────────┴──────┐   │
@@ -94,7 +96,8 @@ LittlePen/
 │   │   ├── pipeline/            # LangGraph 批改流水线 (核心)
 │   │   │   ├── state.py         #   状态定义 (EssayGradingState)
 │   │   │   ├── graph.py         #   流水线编排 (5节点 + 并行分支)
-│   │   │   └── assistant.py     #   Agent 入口 (同步/流式)
+│   │   │   ├── assistant.py     #   Agent 入口 (同步/流式)
+│   │   │   └── batch_processor.py # 批量批改异步处理器
 │   │   ├── tools/               # LangChain 工具
 │   │   │   ├── qr_tool.py       #   二维码解析工具
 │   │   │   ├── ocr_tool.py      #   OCR 识别工具 (GLM-5V)
@@ -118,8 +121,15 @@ LittlePen/
 │   │   │   ├── UploadPanel.vue  #   上传面板 (拖拽 + 选择)
 │   │   │   └── ResultPanel.vue  #   结果面板 (雷达图 + 错误列表)
 │   │   ├── composables/         # Vue Composables
+│   │   ├── router/              # 路由配置 (左侧菜单栏)
+│   │   ├── views/               # 页面视图
+│   │   │   ├── stream-grading/  #   流式批改页
+│   │   │   ├── sync-grading/    #   同步批改页
+│   │   │   ├── batch-upload/    #   批量上传页
+│   │   │   ├── batch-result/    #   批量结果详情页
+│   │   │   └── records-list/    #   作业列表页 (全部记录)
 │   │   ├── types/               # TypeScript 类型定义
-│   │   ├── App.vue              # 根组件
+│   │   ├── App.vue              # 根组件 (左侧菜单栏布局)
 │   │   └── main.ts              # 应用入口
 │   ├── index.html
 │   ├── vite.config.ts           # Vite 配置 (含 /api 代理)
@@ -216,8 +226,8 @@ pnpm dev
 ### 5. 使用
 
 1. 打开浏览器访问 http://localhost:5173
-2. 上传或拖拽一张英文作文答题纸图片
-3. 等待 AI 自动完成批改（流式显示进度）
+2. **单张批改**：上传一张英文作文答题纸图片，等待 AI 完成批改
+3. **批量批改**：上传多张图片或 ZIP 压缩包，后台异步处理，在"作业列表"中查看进度
 4. 查看语法错误列表和四维评分雷达图
 
 ## API 接口
@@ -229,6 +239,9 @@ pnpm dev
 | `POST` | `/api/v1/essay/grade/upload` | 文件上传批改（FormData） |
 | `POST` | `/api/v1/essay/grade/stream` | 流式批改（SSE 进度推送） |
 | `GET` | `/api/v1/essay/{record_id}` | 查询历史批改记录 |
+| `POST` | `/api/v1/batch/upload` | 批量上传（多文件/ZIP） |
+| `GET` | `/api/v1/batch/{batch_id}` | 查询批次批改状态 |
+| `GET` | `/api/v1/essays` | 查询全部批改记录列表 |
 
 ### 同步批改请求示例
 

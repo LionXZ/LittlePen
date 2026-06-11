@@ -1,38 +1,18 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import type { GradeResult } from '@/types/grading'
 
 const emit = defineEmits<{
-  (e: 'grading-complete', result: GradeResult, imageBase64: string): void
+  (e: 'file-ready', imageBase64: string): void
+  (e: 'start-grading'): void
 }>()
 
-const grading = ref(false)
-const progress = ref(0)
-const currentStepLabel = ref('')
+defineProps<{
+  disabled?: boolean
+}>()
 
 const imageBase64 = ref('')
 const previewUrl = ref('')
-const error = ref<string | null>(null)
 const uploadRef = ref()
-
-const stepProgressMap: Record<string, number> = {
-  qr_parse_done: 15,
-  ocr_done: 35,
-  template_remove_done: 50,
-  grammar_check_done: 75,
-  scoring_done: 90,
-  done: 100,
-}
-
-const stepLabelMap: Record<string, string> = {
-  qr_parse_done: '二维码信息识别完成',
-  ocr_done: '手写内容识别完成 (GLM-5V-Turbo)',
-  template_remove_done: '作文内容提取完成',
-  grammar_check_done: '语法批改完成 (deepseek-v4-pro)',
-  scoring_done: '评分完成 (deepseek-v4-pro)',
-  done: '批改完成',
-}
 
 function handleFileChange(uploadFile: any) {
   const file = uploadFile.raw as File
@@ -42,97 +22,20 @@ function handleFileChange(uploadFile: any) {
     const result = e.target?.result as string
     previewUrl.value = result
     imageBase64.value = result.split(',')[1]
+    emit('file-ready', imageBase64.value)
   }
   reader.readAsDataURL(file)
   return false
 }
 
-function reset() {
-  grading.value = false
-  progress.value = 0
-  currentStepLabel.value = ''
-  error.value = null
-}
-
-async function doGrading() {
-  if (!imageBase64.value) {
-    ElMessage.warning('请先上传答题纸图片')
-    return
-  }
-
-  reset()
-  grading.value = true
-
-  try {
-    const response = await fetch('/api/v1/essay/grade/stream', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        image_base64: imageBase64.value,
-        thread_id: 'default',
-      }),
-    })
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
-    }
-
-    const reader = response.body!.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue
-        const payload = line.slice(6)
-        if (payload === '[DONE]') continue
-
-        try {
-          const event = JSON.parse(payload)
-          const step = event.step
-
-          if (step && stepProgressMap[step] !== undefined) {
-            progress.value = stepProgressMap[step]
-          }
-          if (step && stepLabelMap[step]) {
-            currentStepLabel.value = stepLabelMap[step]
-          }
-
-          if (step === 'done' && event.data) {
-            grading.value = false
-            emit('grading-complete', event.data, imageBase64.value)
-            return
-          }
-
-          if (step === 'error') {
-            error.value = event.data?.error || '批改失败'
-            grading.value = false
-            ElMessage.error(error.value!)
-            return
-          }
-        } catch {
-          // ignore parse errors
-        }
-      }
-    }
-  } catch (e: any) {
-    error.value = e.message || '网络错误'
-    grading.value = false
-    ElMessage.error(error.value!)
-  }
-}
-
 function handleRemove() {
   imageBase64.value = ''
   previewUrl.value = ''
-  reset()
+}
+
+function handleStart() {
+  if (!imageBase64.value) return
+  emit('start-grading')
 }
 </script>
 
@@ -150,7 +53,7 @@ function handleRemove() {
         :on-change="handleFileChange"
         :limit="1"
         accept="image/png,image/jpeg,image/jpg"
-        :disabled="grading"
+        :disabled="disabled"
       >
         <div v-if="!previewUrl" class="upload-placeholder">
           <el-icon :size="48" color="#c0c4cc">
@@ -171,28 +74,19 @@ function handleRemove() {
           v-if="previewUrl"
           type="default"
           @click="handleRemove"
-          :disabled="grading"
+          :disabled="disabled"
         >
           重新选择
         </el-button>
 
         <el-button
           type="primary"
-          :loading="grading"
+          :loading="disabled"
           :disabled="!previewUrl"
-          @click="doGrading"
+          @click="handleStart"
         >
-          {{ grading ? '批改中...' : '开始批改' }}
+          {{ disabled ? '批改中...' : '开始批改' }}
         </el-button>
-      </div>
-
-      <div v-if="grading || progress === 100" class="progress-area">
-        <el-progress
-          :percentage="progress"
-          :status="progress === 100 ? 'success' : ''"
-          :stroke-width="16"
-        />
-        <p class="progress-label">{{ currentStepLabel }}</p>
       </div>
     </el-card>
   </div>
@@ -236,16 +130,5 @@ function handleRemove() {
   justify-content: center;
   gap: 16px;
   margin-top: 20px;
-}
-
-.progress-area {
-  margin-top: 24px;
-}
-
-.progress-label {
-  text-align: center;
-  margin-top: 10px;
-  color: #666;
-  font-size: 14px;
 }
 </style>

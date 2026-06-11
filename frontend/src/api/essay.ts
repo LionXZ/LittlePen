@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { GradeResult } from '@/types/grading'
+import type { GradeResult, BatchCreateResponse, BatchStatusResponse } from '@/types/grading'
 
 const api = axios.create({
   baseURL: '/api/v1',
@@ -62,4 +62,60 @@ export function gradeEssayStream(
       thread_id: threadId,
     }),
   })
+}
+
+/** 批量上传图片文件 */
+export async function uploadBatch(
+  files: File[],
+): Promise<BatchCreateResponse> {
+  const form = new FormData()
+  files.forEach((f) => form.append('files', f))
+  const { data } = await api.post<BatchCreateResponse>('/batch/upload', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return data
+}
+
+/** 上传 zip 压缩包批量批改 */
+export async function uploadBatchZip(
+  zipFile: File,
+): Promise<BatchCreateResponse> {
+  const form = new FormData()
+  form.append('zip_file', zipFile)
+  const { data } = await api.post<BatchCreateResponse>('/batch/upload', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return data
+}
+
+/** 查询批次批改状态 */
+export async function getBatch(
+  batchId: string,
+): Promise<BatchStatusResponse> {
+  const { data } = await api.get<BatchStatusResponse>(`/batch/${batchId}`)
+  return data
+}
+
+/** 查询全部批改记录列表 */
+export async function listRecords(
+  limit = 50,
+  offset = 0,
+): Promise<{ items: RecordSummary[]; total: number }> {
+  const { data } = await api.get('/essays', { params: { limit, offset } })
+  return data
+}
+
+export interface RecordSummary {
+  id: string
+  thread_id: string
+  batch_id: string | null
+  filename: string
+  student_name: string
+  student_id: string
+  class_id: string
+  course_id: string
+  total_score: number
+  status: number
+  error_msg: string
+  created_at: string
 }

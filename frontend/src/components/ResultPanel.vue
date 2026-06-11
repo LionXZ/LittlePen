@@ -7,7 +7,11 @@ import ScoreBoard from './ScoreBoard.vue'
 
 defineProps<{
   result: GradeResult | null
-  imageBase64: string
+  imageBase64: string,
+  backUpload:{
+    type:boolean,
+    default:true
+  }
 }>()
 
 defineEmits<{
@@ -19,7 +23,7 @@ defineEmits<{
   <div class="result-panel">
     <div class="result-header">
       <h2>批改结果</h2>
-      <el-button type="default" @click="$emit('back')">返回上传</el-button>
+      <el-button type="default" @click="$emit('back')" v-show="backUpload">返回上传</el-button>
     </div>
 
     <div v-if="result" class="result-cards">

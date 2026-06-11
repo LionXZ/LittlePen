@@ -62,3 +62,44 @@ export const dimensionLabelMap: Record<string, string> = {
   language: '语言质量',
   structure: '篇章结构',
 }
+
+// ===== 批量批改 =====
+
+/** 批量批改创建响应 */
+export interface BatchCreateResponse {
+  batch_id: string
+  total: number
+  items: BatchItemInfo[]
+}
+
+export interface BatchItemInfo {
+  record_id: string
+  filename: string
+}
+
+/** 批量批改单项状态 */
+export interface BatchItemStatus {
+  record_id: string
+  filename: string
+  status: number // 0=待处理 1=处理中 2=已完成 3=失败
+  student_name: string
+  total_score: number
+  error_msg: string
+}
+
+/** 批量批改状态响应 */
+export interface BatchStatusResponse {
+  batch_id: string
+  total: number
+  completed: number
+  failed: number
+  items: BatchItemStatus[]
+}
+
+/** 批改状态映射 */
+export const batchStatusMap: Record<number, { label: string; type: string }> = {
+  0: { label: '待处理', type: 'info' },
+  1: { label: '处理中', type: 'warning' },
+  2: { label: '已完成', type: 'success' },
+  3: { label: '失败', type: 'danger' },
+}

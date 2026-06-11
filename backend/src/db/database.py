@@ -18,21 +18,34 @@ from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-# ===== Async Engine & Session Factory =====
+# ===== Async Engine & Session Factory (懒加载，避免事件循环冲突) =====
 
-async_engine = create_async_engine(
-    settings.database_url,
-    pool_size=settings.MYSQL_POOL_SIZE,
-    max_overflow=20,
-    pool_recycle=settings.MYSQL_POOL_RECYCLE,
-    echo=settings.DEBUG,
-)
+_async_engine = None
+_async_session_factory = None
 
-async_session_factory = async_sessionmaker(
-    bind=async_engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
+
+def _get_engine():
+    global _async_engine
+    if _async_engine is None:
+        _async_engine = create_async_engine(
+            settings.database_url,
+            pool_size=settings.MYSQL_POOL_SIZE,
+            max_overflow=20,
+            pool_recycle=settings.MYSQL_POOL_RECYCLE,
+            echo=settings.DEBUG,
+        )
+    return _async_engine
+
+
+def _get_session_factory():
+    global _async_session_factory
+    if _async_session_factory is None:
+        _async_session_factory = async_sessionmaker(
+            bind=_get_engine(),
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+    return _async_session_factory
 
 # ===== ORM Model =====
 
@@ -61,8 +74,12 @@ class GradingRecord(Base):
     scores = Column(JSON, comment="四维评分详情")
     total_score = Column(DECIMAL(5, 2), default=0.00, comment="总分 0.00-100.00")
 
-    # 状态
-    status = Column(TINYINT, nullable=False, default=1, comment="0=失败 1=成功")
+    # 批次
+    batch_id = Column(String(36), nullable=True, default=None, index=True, comment="批次ID，单张批改时为空")
+    filename = Column(String(256), default="", comment="原始文件名")
+
+    # 状态: 0=待处理 1=处理中 2=已完成 3=失败
+    status = Column(TINYINT, nullable=False, default=2, comment="0=待处理 1=处理中 2=已完成 3=失败")
     error_msg = Column(Text, comment="失败时的错误信息")
     image_path = Column(String(512), default="", comment="上传图片本地路径")
 
@@ -82,15 +99,46 @@ class GradingRecord(Base):
 # ===== 数据库初始化 =====
 
 async def init_db():
-    """自动建表（DDL）"""
-    async with async_engine.begin() as conn:
+    """自动建表 + 迁移已有表结构"""
+    async with _get_engine().begin() as conn:
+        # 1. 建表（如果不存在）
         await conn.run_sync(Base.metadata.create_all)
+
+        # 2. 增量迁移：添加新列（如果不存在则添加）
+        try:
+            await conn.execute(text(
+                "ALTER TABLE grading_records ADD COLUMN batch_id VARCHAR(36) NULL"
+            ))
+            await conn.execute(text(
+                "CREATE INDEX ix_grading_records_batch_id ON grading_records (batch_id)"
+            ))
+        except Exception:
+            pass  # 列/索引已存在
+
+        try:
+            await conn.execute(text(
+                "ALTER TABLE grading_records ADD COLUMN filename VARCHAR(256) DEFAULT ''"
+            ))
+        except Exception:
+            pass
+
+        # 3. 迁移旧状态值：旧 0=失败→3=失败, 旧 1=成功→2=已完成
+        try:
+            await conn.execute(text(
+                "UPDATE grading_records SET status = 2 WHERE status = 1"
+            ))
+            await conn.execute(text(
+                "UPDATE grading_records SET status = 3 WHERE status = 0"
+            ))
+        except Exception:
+            pass
+
     logger.info(f"MySQL 数据库初始化完成: {settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}")
 
 
 async def close_db():
     """释放连接池"""
-    await async_engine.dispose()
+    await _get_engine().dispose()
 
 
 # ===== CRUD =====
@@ -114,6 +162,8 @@ async def save_grading_record(
     thread_id: str,
     result: dict,
     image_path: str = "",
+    batch_id: str = None,
+    filename: str = "",
 ) -> None:
     """保存批改记录"""
     qr_data = result.get("qr_data")
@@ -127,19 +177,130 @@ async def save_grading_record(
         grammar_errors=result.get("grammar_errors", []),
         scores=result.get("scores"),
         total_score=result.get("total_score", 0.0),
-        status=0 if has_error else 1,
+        status=3 if has_error else 2,  # 2=已完成 3=失败
         error_msg=result.get("error"),
         image_path=image_path,
+        batch_id=batch_id,
+        filename=filename,
     )
 
-    async with async_session_factory() as session:
+    async with _get_session_factory()() as session:
         session.add(record)
         await session.commit()
 
 
+# ===== Batch CRUD =====
+
+async def create_pending_record(
+    record_id: str,
+    batch_id: str,
+    filename: str,
+    image_path: str,
+) -> None:
+    """创建待处理的批改记录"""
+    async with _get_session_factory()() as session:
+        record = GradingRecord(
+            record_uid=record_id,
+            thread_id=batch_id,
+            batch_id=batch_id,
+            filename=filename,
+            image_path=image_path,
+            status=0,  # 待处理
+        )
+        session.add(record)
+        await session.commit()
+
+
+async def update_record_status(
+    record_id: str,
+    status: int,
+    result: dict = None,
+) -> None:
+    """更新记录状态和批改结果"""
+    async with _get_session_factory()() as session:
+        from sqlalchemy import select, update
+        stmt = select(GradingRecord).where(GradingRecord.record_uid == record_id)
+        result_row = await session.execute(stmt)
+        record = result_row.scalar_one_or_none()
+        if record is None:
+            return
+
+        record.status = status
+        if result is not None:
+            qr_data = result.get("qr_data")
+            if qr_data:
+                record.student_name = qr_data.get("student_name", "")
+                record.student_id = qr_data.get("student_id", "")
+                record.class_id = qr_data.get("class_id", "")
+                record.course_id = qr_data.get("course_id", "")
+                record.schedule_id = qr_data.get("schedule_id", "")
+                record.gender = qr_data.get("gender", "")
+            record.essay_clean_text = result.get("essay_clean_text", "")
+            record.grammar_errors = result.get("grammar_errors", [])
+            record.scores = result.get("scores")
+            record.total_score = result.get("total_score", 0.0)
+            if result.get("error"):
+                record.error_msg = result["error"]
+        await session.commit()
+
+
+async def list_records_by_batch(batch_id: str) -> list:
+    """按批次查询所有记录"""
+    from sqlalchemy import select
+
+    async with _get_session_factory()() as session:
+        stmt = (
+            select(GradingRecord)
+            .where(GradingRecord.batch_id == batch_id)
+            .order_by(GradingRecord.created_at.asc())
+        )
+        result = await session.execute(stmt)
+        rows = result.scalars().all()
+
+        return [
+            {
+                "id": r.record_uid,
+                "batch_id": r.batch_id,
+                "filename": r.filename,
+                "student_name": r.student_name,
+                "student_id": r.student_id,
+                "total_score": float(r.total_score) if r.total_score else 0.0,
+                "status": r.status,
+                "error_msg": r.error_msg,
+                "image_path": r.image_path,
+                "created_at": r.created_at.isoformat() if r.created_at else "",
+            }
+            for r in rows
+        ]
+
+
+async def list_pending_records_by_batch(batch_id: str) -> list:
+    """按批次查询待处理记录（按创建时间排序）"""
+    from sqlalchemy import select
+
+    async with _get_session_factory()() as session:
+        stmt = (
+            select(GradingRecord)
+            .where(GradingRecord.batch_id == batch_id)
+            .where(GradingRecord.status == 0)  # 待处理
+            .order_by(GradingRecord.created_at.asc())
+        )
+        result = await session.execute(stmt)
+        rows = result.scalars().all()
+
+        return [
+            {
+                "id": r.record_uid,
+                "image_path": r.image_path,
+                "filename": r.filename,
+            }
+            for r in rows
+        ]
+
+
 async def get_grading_record(record_id: str) -> Optional[Dict[str, Any]]:
     """查询批改记录"""
-    async with async_session_factory() as session:
+    async with _get_session_factory()() as session:
         from sqlalchemy import select
         stmt = select(GradingRecord).where(GradingRecord.record_uid == record_id)
         result = await session.execute(stmt)
@@ -155,6 +316,8 @@ async def get_grading_record(record_id: str) -> Optional[Dict[str, Any]]:
             "student_id": row.student_id,
             "class_id": row.class_id,
             "course_id": row.course_id,
+            "schedule_id": row.schedule_id,
+            "gender": row.gender,
             "essay_clean_text": row.essay_clean_text,
             "grammar_errors": row.grammar_errors,
             "scores": row.scores,
@@ -175,7 +338,7 @@ async def list_grading_records(
     """列表查询批改记录"""
     from sqlalchemy import select
 
-    async with async_session_factory() as session:
+    async with _get_session_factory()() as session:
         stmt = select(GradingRecord).order_by(GradingRecord.created_at.desc())
 
         if student_id:
@@ -191,10 +354,15 @@ async def list_grading_records(
             {
                 "id": r.record_uid,
                 "thread_id": r.thread_id,
+                "batch_id": r.batch_id,
+                "filename": r.filename,
                 "student_name": r.student_name,
                 "student_id": r.student_id,
+                "class_id": r.class_id,
+                "course_id": r.course_id,
                 "total_score": float(r.total_score) if r.total_score else 0.0,
                 "status": r.status,
+                "error_msg": r.error_msg,
                 "created_at": r.created_at.isoformat() if r.created_at else "",
             }
             for r in rows

@@ -65,3 +65,37 @@ class SSEProgressEvent(BaseModel):
     """SSE 流式进度事件"""
     step: str
     data: Optional[dict] = None
+
+
+# ===== 批量批改模型 =====
+
+class BatchItemInfo(BaseModel):
+    """批量上传单项信息"""
+    record_id: str
+    filename: str
+
+
+class BatchCreateResponse(BaseModel):
+    """批量批改创建响应"""
+    batch_id: str
+    total: int
+    items: List[BatchItemInfo]
+
+
+class BatchItemStatus(BaseModel):
+    """批量批改单项状态"""
+    record_id: str
+    filename: str
+    status: int  # 0=待处理 1=处理中 2=已完成 3=失败
+    student_name: str = ""
+    total_score: float = 0.0
+    error_msg: str = ""
+
+
+class BatchStatusResponse(BaseModel):
+    """批量批改状态响应"""
+    batch_id: str
+    total: int
+    completed: int
+    failed: int
+    items: List[BatchItemStatus]
