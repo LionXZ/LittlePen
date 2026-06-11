@@ -291,29 +291,144 @@ data: {"step": "done", "data": {...完整结果...}}
 data: [DONE]
 ```
 
-## 批改流水线流程
+## 批改数据流向
+
+### 单张批改（同步 / 流式）
 
 ```
-upload ──▶ qr_parse ──▶ ocr (GLM-5V) ──▶ template_remove
-                                              │
-                             ┌────────────────┴────────────────┐
-                             ▼                                 ▼
-                      grammar_check                        scoring
-                      (deepseek)                           (deepseek)
-                             │                                 │
-                             └────────────────┬────────────────┘
-                                              ▼
-                                          aggregate
-                                              │
-                                              ▼
-                                           result
+┌─────────┐
+│  前端     │ POST /api/v1/essay/grade          POST /api/v1/essay/grade/stream
+│ Upload   │ (base64 JSON) 或  multipart upload  (SSE base64 JSON)
+│ Panel    │
+└────┬─────┘
+     │
+     ▼
+┌──────────────────────────────────────────────────────────────┐
+│  routes.py                                                   │
+│  grade_essay() / grade_essay_upload() / grade_essay_stream() │
+│  ├─ 校验文件类型/大小                                          │
+│  ├─ 文件保存到 data/uploads/ (upload 模式)                     │
+│  └─ 调用 essay_agent.grade() 或 .grade_stream()               │
+└────┬─────────────────────────────────────────────────────────┘
+     │
+     ▼
+┌──────────────────────────────────────────────────────────────┐
+│  assistant.py — EssayGradingAgent                            │
+│                                                              │
+│  grade(image_base64, thread_id)                              │
+│  ├─ _build_initial_state()      → EssayGradingState          │
+│  ├─ pipeline.ainvoke(state)     → 同步等待完整结果             │
+│  └─ _build_result(final_state)  → {qr_data, essay, errors,   │
+│                                      scores, total_score}     │
+│                                                              │
+│  grade_stream(image_base64, thread_id)                       │
+│  ├─ _build_initial_state()      → EssayGradingState          │
+│  ├─ pipeline.astream(state, stream_mode="values") → 逐节点... │
+│  └─ 每个节点 yield {"step": "xxx_done"}                      │
+│     最后 yield {"step": "done", "data": _build_result(...)}  │
+└────┬─────────────────────────────────────────────────────────┘
+     │
+     ▼
+┌──────────────────────────────────────────────────────────────┐
+│  graph.py — LangGraph StateGraph (编译后的 grading_pipeline)   │
+│                                                              │
+│  node "qr_parse"          → qr_parse_node()                  │
+│  │   调用 parse_qr_code.invoke() → pyzbar 解码二维码           │
+│  │   输出: qr_raw, qr_data, current_step="qr_parse_done"      │
+│  │   失败 → "error_handler"                                   │
+│  ▼                                                           │
+│  node "ocr"               → ocr_node()                       │
+│  │   调用 ocr_handwriting.invoke() → GLM-5V-Turbo (多模态)    │
+│  │   输出: ocr_raw_text, current_step="ocr_done"              │
+│  ▼                                                           │
+│  node "template_remove"   → template_remove_node()           │
+│  │   调用 remove_template_text.invoke() → 轻量 LLM 去模板     │
+│  │   输出: essay_clean_text, current_step="template_remove"   │
+│  │                                                           │
+│  ├──────────── 并行分支 ────────────┤                          │
+│  ▼                                 ▼                         │
+│  node "grammar_check"    node "scoring"                      │
+│  grammar_check_node()    scoring_node()                      │
+│  grammar_check.invoke()  score_essay_4dimensions.invoke()    │
+│  → deepseek-v4-pro       → deepseek-v4-pro                   │
+│  grammar_errors[]        scores{4维 + total_score}            │
+│  │                                 │                         │
+│  └──────────── 汇聚 ───────────────┘                          │
+│  ▼                                                           │
+│  node "aggregate"        → aggregate_node()                  │
+│    合并两个并行分支结果, current_step="done"                    │
+│                                                              │
+│  node "error_handler"    → error_handler_node()              │
+│    current_step="error"                                      │
+└────┬─────────────────────────────────────────────────────────┘
+     │
+     ▼
+┌──────────────────────────────────────────────────────────────┐
+│  routes.py (回写)                                             │
+│  └─ save_grading_record(record_id, thread_id, result)        │
+│     → MySQL grading_records 表                                │
+│     status=2(已完成) / status=3(失败)                          │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-1. **二维码解析** (`qr_parse`) — 从答题纸图片中提取学生信息
-2. **手写 OCR** (`ocr`) — GLM-5V-Turbo 多模态模型识别手写英文
-3. **模板去噪** (`template_remove`) — 剔除答题纸模板文字，提取纯作文
-4. **并行处理** — 语法批改和四维评分同时执行（减少总耗时）
-5. **结果聚合** (`aggregate`) — 合并所有批改结果返回前端
+### 批量批改
+
+```
+┌─────────────┐
+│  前端         │ POST /api/v1/batch/upload (multipart: files[] 或 zip_file)
+│  BatchUpload │
+└──────┬───────┘
+       │
+       ▼
+┌──────────────────────────────────────────────────────────────┐
+│  routes.py — batch_upload()                                  │
+│  ├─ 解压 ZIP / 收集多文件 → upload_files[]                    │
+│  ├─ 逐个: 保存文件到 data/uploads/, create_pending_record()    │
+│  │        → MySQL: status=0 (待处理), batch_id=UUID           │
+│  ├─ asyncio.create_task(process_batch(batch_id))  ← 立即返回   │
+│  └─ return {batch_id, total, items[]}                        │
+└──────┬───────────────────────────────────────────────────────┘
+       │  (异步任务, 不阻塞响应)
+       ▼
+┌──────────────────────────────────────────────────────────────┐
+│  batch_processor.py                                          │
+│                                                              │
+│  process_batch(batch_id)                                     │
+│  ├─ list_pending_records_by_batch() → 查 status=0 的记录      │
+│  └─ asyncio.gather(*[process_single() for each])  ← 并行     │
+│                                                              │
+│  process_single(record_id, image_path, filename)              │
+│  ├─ async with _semaphore:          ← 最大 3 并发             │
+│  ├─ update_record_status(id, 1)     → status=1 (处理中)       │
+│  ├─ essay_agent.grade(image_base64) → 调用完整流水线           │
+│  ├─ 成功: update_record_status(id, 2, result) → 已完成         │
+│  └─ 失败: update_record_status(id, 3, result) → 失败           │
+│                                                              │
+│  recover_unfinished()             ← server.py lifespan 调用   │
+│  ├─ list_unfinished_records()     → 查 status=0 或 1 的记录   │
+│  ├─ 将 status=1 重置为 status=0                                │
+│  └─ asyncio.gather(*[process_single() for each])             │
+└──────────────────────────────────────────────────────────────┘
+
+前端通过 GET /api/v1/essays (每 10 秒轮询) 感知状态变化:
+  status=0 待处理 → status=1 处理中 → status=2 已完成 → 点击查看详情
+                                   → status=3 失败   → 显示错误信息
+```
+
+### 数据状态流转
+
+```
+  upload ──▶ status=0 (待处理) ──▶ status=1 (处理中) ──▶ status=2 (已完成)
+               │                     │                     │
+               │ 服务重启后自动恢复      │ 重启后重置为0         │ 持久化到 MySQL
+               │ recover_unfinished()  │ 重新处理             │ grading_records
+               │                     │                     │
+               └─────────────────────┴─────────────────────┘
+                                       │
+                                       ▼
+                                  status=3 (失败)
+                                  记录 error_msg
+```
 
 ## 配置参数
 

@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from src.api.routes import router
 from src.config.settings import settings
 from src.db.database import init_db, close_db
+from src.pipeline.batch_processor import recover_unfinished
 
 
 @asynccontextmanager
@@ -14,6 +15,8 @@ async def lifespan(app: FastAPI):
     """应用生命周期事件"""
     # 启动时初始化数据库
     await init_db()
+    # 恢复未完成的批改任务
+    await recover_unfinished()
     print(f"\n{'='*50}")
     print(f"  {settings.PROJECT_NAME} v{settings.VERSION}")
     print(f"  API: http://{settings.API_HOST}:{settings.API_PORT}")

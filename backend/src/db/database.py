@@ -274,6 +274,31 @@ async def list_records_by_batch(batch_id: str) -> list:
         ]
 
 
+async def list_unfinished_records() -> list:
+    """查询所有未完成的记录（status=0 待处理 或 status=1 处理中），用于重启恢复"""
+    from sqlalchemy import select
+
+    async with _get_session_factory()() as session:
+        stmt = (
+            select(GradingRecord)
+            .where(GradingRecord.status.in_([0, 1]))
+            .order_by(GradingRecord.created_at.asc())
+        )
+        result = await session.execute(stmt)
+        rows = result.scalars().all()
+
+        return [
+            {
+                "id": r.record_uid,
+                "batch_id": r.batch_id,
+                "image_path": r.image_path,
+                "filename": r.filename,
+                "status": r.status,
+            }
+            for r in rows
+        ]
+
+
 async def list_pending_records_by_batch(batch_id: str) -> list:
     """按批次查询待处理记录（按创建时间排序）"""
     from sqlalchemy import select
