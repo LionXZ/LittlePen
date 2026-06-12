@@ -5,25 +5,35 @@ import EssayTextCard from './EssayTextCard.vue'
 import GrammarList from './GrammarList.vue'
 import ScoreBoard from './ScoreBoard.vue'
 
-defineProps<{
+const props = defineProps<{
   result: GradeResult | null
-  imageBase64: string,
-  backUpload:{
-    type:boolean,
-    default:true
+  imageBase64: string
+  recordId?: string
+  backUpload?: {
+    type: boolean
+    default: true
   }
 }>()
 
 defineEmits<{
   (e: 'back'): void
 }>()
+
+function downloadReport() {
+  if (props.recordId) {
+    window.open(`/api/v1/essay/${props.recordId}/report`)
+  }
+}
 </script>
 
 <template>
   <div class="result-panel">
     <div class="result-header">
       <h2>批改结果</h2>
-      <el-button type="default" @click="$emit('back')" v-show="backUpload">返回上传</el-button>
+      <div>
+        <el-button type="primary" @click="downloadReport" v-if="result && recordId">下载报告</el-button>
+        <el-button type="default" @click="$emit('back')" v-show="backUpload" style="margin-left: 8px;">返回上传</el-button>
+      </div>
     </div>
 
     <div v-if="result" class="result-cards">
@@ -40,6 +50,7 @@ defineEmits<{
       <ScoreBoard
         :scores="result.scores"
         :total-score="result.total_score"
+        :subject="result.qr_data?.subject || 'en'"
       />
     </div>
 

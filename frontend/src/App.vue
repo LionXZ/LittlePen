@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { Document, Clock, FolderOpened, List } from '@element-plus/icons-vue'
+import { Document, Clock, FolderOpened, List, DataAnalysis } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const activeMenu = computed(() => route.path)
@@ -35,6 +35,10 @@ const activeMenu = computed(() => route.path)
         <el-menu-item index="/records">
           <el-icon><List /></el-icon>
           <span>作业列表</span>
+        </el-menu-item>
+        <el-menu-item index="/dashboard">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>成绩看板</span>
         </el-menu-item>
       </el-menu>
     </aside>

@@ -67,6 +67,7 @@ class GradingRecord(Base):
     course_id = Column(String(64), default="", comment="课程ID")
     schedule_id = Column(String(64), default="", comment="课时ID")
     gender = Column(String(8), default="", comment="性别")
+    subject = Column(String(16), default="en", comment="科目: en/cn/ma/sc")
 
     # 批改结果
     essay_clean_text = Column(Text, comment="清洁后的作文文本")
@@ -122,6 +123,13 @@ async def init_db():
         except Exception:
             pass
 
+        try:
+            await conn.execute(text(
+                "ALTER TABLE grading_records ADD COLUMN subject VARCHAR(16) DEFAULT 'en'"
+            ))
+        except Exception:
+            pass
+
         # 3. 迁移旧状态值：旧 0=失败→3=失败, 旧 1=成功→2=已完成
         try:
             await conn.execute(text(
@@ -154,6 +162,7 @@ def _extract_student_info(qr_data: Optional[dict]) -> dict:
         "course_id": qr_data.get("course_id", ""),
         "schedule_id": qr_data.get("schedule_id", ""),
         "gender": qr_data.get("gender", ""),
+        "subject": qr_data.get("subject", "en"),
     }
 
 
@@ -182,6 +191,7 @@ async def save_grading_record(
         image_path=image_path,
         batch_id=batch_id,
         filename=filename,
+        subject=qr_data.get("subject", "en") if qr_data else "en",
     )
 
     async with _get_session_factory()() as session:
@@ -235,6 +245,7 @@ async def update_record_status(
                 record.course_id = qr_data.get("course_id", "")
                 record.schedule_id = qr_data.get("schedule_id", "")
                 record.gender = qr_data.get("gender", "")
+                record.subject = qr_data.get("subject", "en")
             record.essay_clean_text = result.get("essay_clean_text", "")
             record.grammar_errors = result.get("grammar_errors", [])
             record.scores = result.get("scores")
@@ -242,6 +253,80 @@ async def update_record_status(
             if result.get("error"):
                 record.error_msg = result["error"]
         await session.commit()
+
+
+# ===== 统计查询 =====
+
+async def get_stats_overview() -> dict:
+    """全局统计概览"""
+    from sqlalchemy import select, func
+
+    async with _get_session_factory()() as session:
+        stmt = select(
+            func.count(GradingRecord.id).label("total"),
+            func.avg(GradingRecord.total_score).label("avg_score"),
+            func.max(GradingRecord.total_score).label("max_score"),
+        ).where(GradingRecord.status == 2)
+
+        result = await session.execute(stmt)
+        row = result.one()
+        return {
+            "total_records": row.total,
+            "avg_score": round(float(row.avg_score or 0), 1),
+            "max_score": round(float(row.max_score or 0), 1),
+        }
+
+
+async def get_stats_by_class() -> list:
+    """按班级统计"""
+    from sqlalchemy import select, func
+
+    async with _get_session_factory()() as session:
+        stmt = (
+            select(
+                GradingRecord.class_id,
+                func.count(GradingRecord.id).label("count"),
+                func.avg(GradingRecord.total_score).label("avg_score"),
+            )
+            .where(GradingRecord.status == 2)
+            .where(GradingRecord.class_id != "")
+            .group_by(GradingRecord.class_id)
+            .order_by(func.count(GradingRecord.id).desc())
+        )
+        result = await session.execute(stmt)
+        return [
+            {
+                "class_id": r.class_id,
+                "record_count": r.count,
+                "avg_score": round(float(r.avg_score or 0), 1),
+            }
+            for r in result
+        ]
+
+
+async def get_stats_by_student(student_id: str, limit: int = 20) -> list:
+    """按学生查询最近 N 次成绩趋势"""
+    from sqlalchemy import select
+
+    async with _get_session_factory()() as session:
+        stmt = (
+            select(GradingRecord)
+            .where(GradingRecord.student_id == student_id)
+            .where(GradingRecord.status == 2)
+            .order_by(GradingRecord.created_at.desc())
+            .limit(limit)
+        )
+        result = await session.execute(stmt)
+        rows = result.scalars().all()
+        return [
+            {
+                "record_id": r.record_uid,
+                "total_score": float(r.total_score or 0),
+                "subject": r.subject,
+                "created_at": r.created_at.isoformat() if r.created_at else "",
+            }
+            for r in reversed(rows)  # 时间升序便于画趋势图
+        ]
 
 
 async def list_records_by_batch(batch_id: str) -> list:
@@ -343,6 +428,7 @@ async def get_grading_record(record_id: str) -> Optional[Dict[str, Any]]:
             "course_id": row.course_id,
             "schedule_id": row.schedule_id,
             "gender": row.gender,
+            "subject": row.subject,
             "essay_clean_text": row.essay_clean_text,
             "grammar_errors": row.grammar_errors,
             "scores": row.scores,

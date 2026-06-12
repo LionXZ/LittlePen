@@ -6,6 +6,15 @@ export interface QRData {
   student_id: string
   student_name: string
   gender: string
+  subject?: string  // en/cn/ma/sc
+}
+
+/** 科目映射 */
+export const subjectLabelMap: Record<string, string> = {
+  en: '英语',
+  cn: '语文',
+  ma: '数学',
+  sc: '科学',
 }
 
 /** 语法错误项 */

@@ -23,6 +23,7 @@ from src.db.database import (
     save_grading_record, get_grading_record,
     create_pending_record, update_record_status,
     list_records_by_batch, list_grading_records,
+    get_stats_overview, get_stats_by_class, get_stats_by_student,
 )
 from src.utils.logger import logger
 
@@ -163,6 +164,50 @@ async def get_grading_result(record_id: str):
         raise HTTPException(status_code=404, detail=f"批改记录不存在: {record_id}")
     return record
 
+
+@router.get("/essay/{record_id}/report")
+async def download_report(record_id: str):
+    """下载批改报告 PDF"""
+    from fastapi.responses import FileResponse
+    from src.pipeline.report_generator import generate_report
+
+    record = await get_grading_record(record_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"批改记录不存在: {record_id}")
+
+    output_dir = os.path.join(settings.UPLOAD_DIR, "reports")
+    os.makedirs(output_dir, exist_ok=True)
+    pdf_path = os.path.join(output_dir, f"{record_id}.pdf")
+
+    generate_report(record, pdf_path)
+    return FileResponse(
+        pdf_path,
+        media_type="application/pdf",
+        filename=f"批改报告_{record.get('student_name', record_id)}.pdf",
+    )
+
+
+# ===== 统计看板 =====
+
+@router.get("/stats/overview")
+async def stats_overview():
+    """全局成绩统计"""
+    return await get_stats_overview()
+
+
+@router.get("/stats/class")
+async def stats_by_class():
+    """按班级统计"""
+    return await get_stats_by_class()
+
+
+@router.get("/stats/student/{student_id}")
+async def stats_by_student(student_id: str, limit: int = 20):
+    """学生成绩趋势"""
+    return await get_stats_by_student(student_id, limit)
+
+
+# ===== 作业列表 =====
 
 @router.get("/essays")
 async def list_essays(limit: int = 50, offset: int = 0):

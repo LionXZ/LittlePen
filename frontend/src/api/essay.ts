@@ -44,6 +44,32 @@ export async function healthCheck(): Promise<{ status: string; version: string }
   return data
 }
 
+/** 成绩概览统计 */
+export async function getStatsOverview(): Promise<{
+  total_records: number; avg_score: number; max_score: number
+}> {
+  const { data } = await api.get('/stats/overview')
+  return data
+}
+
+/** 按班级统计 */
+export async function getStatsByClass(): Promise<Array<{
+  class_id: string; record_count: number; avg_score: number
+}>> {
+  const { data } = await api.get('/stats/class')
+  return data
+}
+
+/** 学生成绩趋势 */
+export async function getStatsByStudent(
+  studentId: string, limit = 20
+): Promise<Array<{
+  record_id: string; total_score: number; subject: string; created_at: string
+}>> {
+  const { data } = await api.get(`/stats/student/${studentId}`)
+  return data
+}
+
 /** 获取 SSE 流式批改 URL */
 export function getStreamUrl(imageBase64: string, threadId = 'default'): string {
   return `/api/v1/essay/grade/stream`

@@ -40,17 +40,39 @@ def _extract_json(text: str) -> dict:
     return json.loads(text)
 
 
-@tool(args_schema=GrammarCheckInput)
-def grammar_check(essay_text: str) -> dict:
-    """
-    使用 deepseek-v4-pro 对学生英文作文进行语法和用词批改。
+def _build_grammar_prompt(essay_text: str, subject: str) -> str:
+    """根据科目生成语法批改 prompt"""
+    if subject == "cn":
+        return f"""你是小学语文作文批改老师。请批改以下小学生中文作文：
 
-    识别语法错误、拼写错误、用词不当、标点错误等问题，
-    针对每个问题给出修正建议和中文解释（面向儿童）。
-    """
-    model = get_grading_model()  # temperature=0，确保一致性
+<essay>
+{essay_text}
+</essay>
 
-    prompt = f"""你是儿童英文作文批改老师。请批改以下小学生英文作文：
+要求：
+1. 找出所有错别字、用词不当、病句、标点错误
+2. 对每个错误给出修正建议
+3. 解释用简单的中文，适合孩子理解
+4. 注意：只指出确实有误的地方，不要过度修改孩子的原创表达
+5. 如果作文无错误，返回空的 errors 列表并在 overall_comment 中给予鼓励
+
+请严格按照以下 JSON 格式返回（不要输出其他内容）：
+```json
+{{
+  "errors": [
+    {{
+      "original": "原文错误句子或片段",
+      "corrected": "修正后的正确表达",
+      "error_type": "错别字|用词|病句|标点",
+      "explanation": "中文解释"
+    }}
+  ],
+  "overall_comment": "整体评价（中文）"
+}}
+```"""
+    else:
+        # 英文（默认）
+        return f"""你是儿童英文作文批改老师。请批改以下小学生英文作文：
 
 <essay>
 {essay_text}
@@ -77,6 +99,19 @@ def grammar_check(essay_text: str) -> dict:
   "overall_comment": "整体评价（中文）"
 }}
 ```"""
+
+
+@tool(args_schema=GrammarCheckInput)
+def grammar_check(essay_text: str, subject: str = "en") -> dict:
+    """
+    使用 deepseek-v4-pro 对学生作文进行语法和用词批改。
+
+    识别语法错误、拼写错误、用词不当、标点错误等问题，
+    针对每个问题给出修正建议和中文解释（面向儿童）。
+    根据 subject 参数切换中英文批改。
+    """
+    model = get_grading_model()  # temperature=0，确保一致性
+    prompt = _build_grammar_prompt(essay_text, subject)
 
     response = model.invoke(prompt)
     content = response.content.strip()

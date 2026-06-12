@@ -57,7 +57,7 @@ onMounted(fetchResult)
     </div>
 
     <div v-else-if="result">
-      <ResultPanel :result="result" image-base64="" @back="goBack" :backUpload="fasle"/>
+      <ResultPanel :result="result" image-base64="" :record-id="recordId" @back="goBack" :back-upload="false"/>
     </div>
 
     <div v-else class="error-state">

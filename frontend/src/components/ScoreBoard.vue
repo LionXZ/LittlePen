@@ -7,18 +7,31 @@ import { dimensionLabelMap } from '@/types/grading'
 const props = defineProps<{
   scores: ScoresData | null
   totalScore: number
+  subject?: string
 }>()
 
 const chartRef = ref<HTMLDivElement>()
 let chartInstance: echarts.ECharts | null = null
 
+// 按科目的维度标签映射
+const dimensionLabelBySubject: Record<string, Record<string, string>> = {
+  en: { neatness: '卷面整洁', content: '内容要点', language: '语言质量', structure: '篇章结构' },
+  cn: { neatness: '内容立意', content: '语言表达', language: '篇章结构', structure: '书写规范' },
+}
+
+const currentLabels = computed(() => {
+  const subj = props.subject || 'en'
+  return dimensionLabelBySubject[subj] || dimensionLabelBySubject.en
+})
+
 const dimensions = computed(() => {
   if (!props.scores) return []
+  const labels = currentLabels.value
   return [
-    { name: '卷面整洁', score: props.scores.neatness.score, max: 25 },
-    { name: '内容要点', score: props.scores.content.score, max: 25 },
-    { name: '语言质量', score: props.scores.language.score, max: 25 },
-    { name: '篇章结构', score: props.scores.structure.score, max: 25 },
+    { name: labels.neatness, score: props.scores.neatness.score, max: 25 },
+    { name: labels.content, score: props.scores.content.score, max: 25 },
+    { name: labels.language, score: props.scores.language.score, max: 25 },
+    { name: labels.structure, score: props.scores.structure.score, max: 25 },
   ]
 })
 
@@ -102,7 +115,7 @@ watch(() => props.scores, () => {
           class="dimension-item"
         >
           <div class="dim-header">
-            <span class="dim-label">{{ dimensionLabelMap[key] || key }}</span>
+            <span class="dim-label">{{ currentLabels[key] || key }}</span>
             <span class="dim-score">{{ dim.score }} / 25</span>
           </div>
           <el-progress

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { QRData } from '@/types/grading'
+import { subjectLabelMap } from '@/types/grading'
 
 defineProps<{
   qrData: QRData | null
@@ -31,6 +32,9 @@ defineProps<{
         </el-descriptions-item>
         <el-descriptions-item label="性别">
           {{ qrData.gender }}
+        </el-descriptions-item>
+        <el-descriptions-item label="科目">
+          {{ subjectLabelMap[qrData.subject || 'en'] || qrData.subject || '英语' }}
         </el-descriptions-item>
       </el-descriptions>
     </div>
