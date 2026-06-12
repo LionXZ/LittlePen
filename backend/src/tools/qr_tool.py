@@ -1,7 +1,7 @@
 """
 二维码解析工具 - 基于 OpenCV QRCodeDetector
-从答题纸图片中识别二维码，解析出课程ID、班级ID、排课ID、学号、学生姓名、性别。
-格式：课程ID-班级ID-排课ID-学号-encodeURIComponent(学生姓名)-性别
+格式：课程ID-班级ID-排课ID-学号-encodeURIComponent(学生姓名)-性别-科目
+科目编码：en=英语, cn=语文, ma=数学, sc=科学
 """
 import base64
 import cv2
@@ -52,6 +52,7 @@ def parse_qr_code(image_base64: str) -> dict:
             "student_id": parts[3],
             "student_name": unquote(parts[4]),
             "gender": parts[5],
+            "subject": parts[6] if len(parts) >= 7 else "en",  # 默认英语，兼容旧码
         }
 
         return {"error": None, "qr_raw": qr_str, "qr_data": qr_data}

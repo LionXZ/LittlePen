@@ -38,6 +38,17 @@ frontend/dist/
 dist/
 build/
 
+# ===== Claude Code =====
+.claude/settings.local.json
+
+# ===== Spec Kit (可重新生成的文件) =====
+.specify/scripts/
+.specify/extensions/
+.specify/workflows/
+.specify/integrations/
+.specify/init-options.json
+.specify/extensions.yml
+
 # ===== 系统 =====
 .DS_Store
 Thumbs.db

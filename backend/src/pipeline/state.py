@@ -16,6 +16,7 @@ class EssayGradingState(TypedDict):
     # QR 解析
     qr_raw: str
     qr_data: Optional[dict]
+    subject: str  # 科目: en/cn/ma/sc
 
     # OCR
     ocr_raw_text: str

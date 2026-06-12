@@ -24,6 +24,7 @@ class GrammarCheckResult(BaseModel):
 
 class GrammarCheckInput(BaseModel):
     essay_text: str = Field(description="去除模板后的纯净学生作文文本")
+    subject: str = Field(default="en", description="科目编码: en/cn/ma/sc")
 
 
 def _extract_json(text: str) -> dict:
@@ -47,7 +48,7 @@ def grammar_check(essay_text: str) -> dict:
     识别语法错误、拼写错误、用词不当、标点错误等问题，
     针对每个问题给出修正建议和中文解释（面向儿童）。
     """
-    model = get_grading_model(temperature=0.3)
+    model = get_grading_model()  # temperature=0，确保一致性
 
     prompt = f"""你是儿童英文作文批改老师。请批改以下小学生英文作文：
 

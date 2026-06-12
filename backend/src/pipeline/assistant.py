@@ -15,6 +15,7 @@ def _build_initial_state(image_base64: str) -> dict:
         "image_base64": image_base64,
         "qr_raw": "",
         "qr_data": None,
+        "subject": "",
         "ocr_raw_text": "",
         "essay_clean_text": "",
         "grammar_errors": [],

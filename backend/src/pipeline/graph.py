@@ -21,9 +21,11 @@ def qr_parse_node(state: EssayGradingState) -> dict:
     if result.get("error"):
         return {"error": result["error"], "current_step": "qr_parse_failed"}
 
+    qr_data = result.get("qr_data") or {}
     return {
         "qr_raw": result.get("qr_raw", ""),
-        "qr_data": result["qr_data"],
+        "qr_data": qr_data,
+        "subject": qr_data.get("subject", "en"),
         "current_step": "qr_parse_done",
     }
 
@@ -54,6 +56,7 @@ def grammar_check_node(state: EssayGradingState) -> dict:
     """Step 4a: 语法批改 (deepseek-v4-pro) - 与评分并行"""
     result = grammar_check.invoke({
         "essay_text": state["essay_clean_text"],
+        "subject": state.get("subject", "en"),
     })
     return {
         "grammar_errors": result.get("errors", []),
@@ -65,10 +68,12 @@ def scoring_node(state: EssayGradingState) -> dict:
     """Step 4b: 四维评分 (deepseek-v4-pro) - 与语法批改并行"""
     ocr_text = state.get("ocr_raw_text", "")
     ocr_quality = "OCR 识别完整，字迹清晰可辨" if len(ocr_text) > 50 else "OCR 识别内容较少"
+    subject = state.get("subject", "en")
 
     result = score_essay_4dimensions.invoke({
         "essay_text": state["essay_clean_text"],
         "ocr_quality_note": ocr_quality,
+        "subject": subject,
     })
     return {
         "scores": {

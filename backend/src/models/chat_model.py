@@ -24,10 +24,11 @@ def get_ocr_model(temperature: float = 0.1) -> ChatOpenAI:
     )
 
 
-def get_grading_model(temperature: float = 0.3) -> ChatOpenAI:
+def get_grading_model(temperature: float = 0.0) -> ChatOpenAI:
     """
     作文批改模型：deepseek-v4-pro（DeepSeek）
     用于语法批改、四维评分，支持结构化 JSON 输出 (with_structured_output)。
+    temperature=0 确保评分一致性。
     """
     return ChatOpenAI(
         model=settings.DEEPSEEK_MODEL,           # "deepseek-v4-pro"
